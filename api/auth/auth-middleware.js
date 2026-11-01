@@ -1,73 +1,116 @@
-const { JWT_SECRET } = require("../secrets"); // bu secreti kullanın!
 
+const jwt = require('jsonwebtoken');
+const { JWT_SECRET } = require('../secrets');
+const Users = require('../users/users-model');
+
+// 1. JWT token kontrolü
 const sinirli = (req, res, next) => {
-  /*
-    Eğer Authorization header'ında bir token sağlanmamışsa:
-    status: 401
-    {
-      "message": "Token gereklidir"
+  const authorization = req.headers.authorization;
+
+  if (!authorization) {
+    return res.status(401).json({
+      message: 'Token gereklidir',
+    });
+  }
+
+  const token = authorization.startsWith('Bearer ')
+    ? authorization.slice(7)
+    : authorization;
+
+  if (!token) {
+    return res.status(401).json({
+      message: 'Token gereklidir',
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    req.decodedToken = decoded;
+
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      message: 'Token gecersizdir',
+    });
+  }
+};
+
+// 2. Rol bazlı yetkilendirme
+const sadece = (role_name) => (req, res, next) => {
+  if (
+    !req.decodedToken ||
+    req.decodedToken.role_name !== role_name
+  ) {
+    return res.status(403).json({
+      message: 'Bu, senin için değil',
+    });
+  }
+
+  next();
+};
+
+// 3. Username veritabanında var mı?
+const usernameVarmi = async (req, res, next) => {
+  try {
+    const { username } = req.body || {};
+
+    if (!username) {
+      return res.status(401).json({
+        message: 'Geçersiz kriter',
+      });
     }
 
-    Eğer token doğrulanamıyorsa:
-    status: 401
-    {
-      "message": "Token gecersizdir"
+    const users = await Users.goreBul({ 'u.username': username });
+
+    if (users.length === 0) {
+      return res.status(401).json({
+        message: 'Geçersiz kriter',
+      });
     }
 
-    Alt akıştaki middlewarelar için hayatı kolaylaştırmak için kodu çözülmüş tokeni req nesnesine koyun!
-  */
-}
+    req.user = users[0];
 
-const sadece = role_name => (req, res, next) => {
-  /*
-    
-	Kullanıcı, Authorization headerında, kendi payloadu içinde bu fonksiyona bağımsız değişken olarak iletilen 
-	rol_adı ile eşleşen bir role_name ile bir token sağlamazsa:
-    status: 403
-    {
-      "message": "Bu, senin için değil"
-    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
 
-    Tekrar authorize etmekten kaçınmak için kodu çözülmüş tokeni req nesnesinden çekin!
-  */
-}
-
-
-const usernameVarmi = (req, res, next) => {
-  /*
-    req.body de verilen username veritabanında yoksa
-    status: 401
-    {
-      "message": "Geçersiz kriter"
-    }
-  */
-}
-
-
+// 4. Role name doğrulama
 const rolAdiGecerlimi = (req, res, next) => {
-  /*
-    Bodydeki role_name geçerliyse, req.role_name öğesini trimleyin ve devam edin.
+  const { role_name } = req.body || {};
 
-    Req.body'de role_name eksikse veya trimden sonra sadece boş bir string kaldıysa,
-    req.role_name öğesini "student" olarak ayarlayın ve isteğin devam etmesine izin verin.
+  const trimmedRole =
+    typeof role_name === 'string'
+      ? role_name.trim()
+      : '';
 
-    Stringi trimledikten sonra kalan role_name 'admin' ise:
-    status: 422
-    {
-      "message": "Rol adı admin olamaz"
-    }
+  if (!trimmedRole) {
+    req.role_name = 'student';
+    return next();
+  }
 
-    Trimden sonra rol adı 32 karakterden fazlaysa:
-    status: 422
-    {
-      "message": "rol adı 32 karakterden fazla olamaz"
-    }
-  */
-}
+  if (trimmedRole === 'admin') {
+    return res.status(422).json({
+      message: 'Rol adı admin olamaz',
+    });
+  }
+
+  if (trimmedRole.length > 32) {
+    return res.status(422).json({
+      message: 'rol adı 32 karakterden fazla olamaz',
+    });
+  }
+
+  req.role_name = trimmedRole;
+
+  next();
+};
 
 module.exports = {
   sinirli,
+  sadece,
   usernameVarmi,
   rolAdiGecerlimi,
-  sadece,
-}
+};

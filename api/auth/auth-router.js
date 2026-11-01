@@ -1,41 +1,89 @@
-const router = require("express").Router();
-const { usernameVarmi, rolAdiGecerlimi } = require('./auth-middleware');
-const { JWT_SECRET } = require("../secrets"); // bu secret'ı kullanın!
 
-router.post("/register", rolAdiGecerlimi, (req, res, next) => {
-  /**
-    [POST] /api/auth/register { "username": "anna", "password": "1234", "role_name": "angel" }
+const router = require('express').Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
-    response:
-    status: 201
-    {
-      "user"_id: 3,
-      "username": "anna",
-      "role_name": "angel"
+const Users = require('../users/users-model');
+const {
+  usernameVarmi,
+  rolAdiGecerlimi,
+} = require('./auth-middleware');
+
+const { JWT_SECRET } = require('../secrets');
+
+// POST /api/auth/register
+router.post('/register', rolAdiGecerlimi, async (req, res, next) => {
+  try {
+    const { username, password } = req.body || {};
+
+    if (
+      typeof username !== 'string' ||
+      !username.trim() ||
+      typeof password !== 'string' ||
+      password.length < 4
+    ) {
+      return res.status(422).json({
+        message: 'Geçersiz kayıt bilgileri',
+      });
     }
-   */
+
+    const existingUsers = await Users.goreBul({
+      'u.username': username.trim(),
+    });
+
+    if (existingUsers.length > 0) {
+      return res.status(422).json({
+        message: 'Username kullaniliyor',
+      });
+    }
+
+    const passwordHash = bcrypt.hashSync(password, 10);
+
+    const newUser = await Users.ekle({
+      username: username.trim(),
+      password: passwordHash,
+      role_name: req.role_name,
+    });
+
+    res.status(201).json(newUser);
+  } catch (error) {
+    next(error);
+  }
 });
 
+// POST /api/auth/login
+router.post('/login', usernameVarmi, async (req, res, next) => {
+  try {
+    const { password } = req.body || {};
+    const user = req.user;
 
-router.post("/login", usernameVarmi, (req, res, next) => {
-  /**
-    [POST] /api/auth/login { "username": "sue", "password": "1234" }
+    const passwordCorrect =
+      typeof password === 'string' &&
+      bcrypt.compareSync(password, user.password);
 
-    response:
-    status: 200
-    {
-      "message": "sue geri geldi!",
-      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ETC.ETC"
+    if (!passwordCorrect) {
+      return res.status(401).json({
+        message: 'Geçersiz kriter',
+      });
     }
 
-    Token 1 gün sonra timeout olmalıdır ve aşağıdaki bilgiyi payloadında içermelidir:
+    const payload = {
+      subject: user.user_id,
+      username: user.username,
+      role_name: user.role_name,
+    };
 
-    {
-      "subject"  : 1       // giriş yapan kullanıcının user_id'si
-      "username" : "bob"   // giriş yapan kullanıcının username'i
-      "role_name": "admin" // giriş yapan kulanıcının role adı
-    }
-   */
+    const token = jwt.sign(payload, JWT_SECRET, {
+      expiresIn: '1d',
+    });
+
+    res.status(200).json({
+      message: `${user.username} geri geldi!`,
+      token,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 module.exports = router;
